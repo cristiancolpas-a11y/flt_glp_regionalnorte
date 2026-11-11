@@ -1,0 +1,8 @@
+{
+  "name": "Remix Control y Registro de Cilindros - Montacargas",
+  "description": "Sistema inteligente para el registro y control operativo de cilindros de gas en montacargas, con validación de peso y sincronización en tiempo real con Google Sheets.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
