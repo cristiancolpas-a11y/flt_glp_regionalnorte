@@ -22,6 +22,7 @@ import {
   fetchFromAppsScript,
   appendViaAppsScript,
 } from './services/sheetsService';
+import { cargarMaestros, cargarRecientes, guardarCambio } from './services/glpSupabase';
 import { Header } from './components/Header';
 import { CylinderForm } from './components/CylinderForm';
 import { ConfirmModal } from './components/ConfirmModal';
@@ -158,10 +159,26 @@ export default function App() {
     [accessToken, spreadsheetId, syncAppsScriptData]
   );
 
-  // Sync data from Google Apps Script immediately on mount
+  // Datos maestros e historial desde Supabase (fuente principal)
+  const syncSupabase = useCallback(async () => {
+    setIsSyncingMasterData(true);
+    try {
+      const { maquinas, operadores } = await cargarMaestros();
+      if (maquinas.length) setMachines(maquinas);
+      if (operadores.length) setOperators(operadores);
+      setRecords(await cargarRecientes(50));
+      setSpreadsheetTitle('FLT');
+    } catch (err: any) {
+      console.warn('No se pudo sincronizar con la base de datos:', err?.message);
+      showToast('Sin conexión con la base de datos. Se usan los datos guardados en la app.', 'error');
+    } finally {
+      setIsSyncingMasterData(false);
+    }
+  }, []);
+
   useEffect(() => {
-    syncAppsScriptData();
-  }, [syncAppsScriptData]);
+    syncSupabase();
+  }, [syncSupabase]);
 
   // Initialize Auth
   useEffect(() => {
@@ -239,16 +256,25 @@ export default function App() {
 
     setIsSubmitting(true);
     try {
+      // 1. Guardado principal en Supabase (incluye la foto del horómetro)
+      const { fotoBase64, ...registro } = pendingRecord;
+      const r = await guardarCambio(registro, fotoBase64);
+      showToast(
+        r.horometroRegresivo
+          ? '✓ Registro guardado. Atención: el horómetro es menor que el último registrado para esta máquina.'
+          : '✓ Registro guardado correctamente',
+        r.horometroRegresivo ? 'info' : 'success'
+      );
+
+      // 2. Copia en la hoja Registro y foto en Drive (no bloquea el guardado principal)
       if (appsScriptUrl) {
-        // Direct write to Google Sheets via Apps Script Web App
-        await appendViaAppsScript(pendingRecord, appsScriptUrl);
-        showToast('✓ Registro guardado correctamente en la hoja Registro', 'success');
+        appendViaAppsScript(pendingRecord, appsScriptUrl).catch((e) =>
+          console.warn('No se pudo copiar a la hoja Registro:', e?.message)
+        );
       } else if (accessToken && spreadsheetId) {
-        // Direct write via REST API
-        await appendCylinderRecord(accessToken, spreadsheetId, pendingRecord);
-        showToast('✓ Registro guardado correctamente en la hoja Registro', 'success');
-      } else {
-        showToast('✓ Registro guardado en sesión local', 'success');
+        appendCylinderRecord(accessToken, spreadsheetId, registro).catch((e) =>
+          console.warn('No se pudo copiar a la hoja Registro:', e?.message)
+        );
       }
 
       // Successfully registered!
@@ -257,14 +283,14 @@ export default function App() {
       setIsConfirmModalOpen(false);
       setPendingRecord(null);
 
-      // Refresh records after write
-      if (appsScriptUrl) {
-        setTimeout(() => syncAppsScriptData(appsScriptUrl), 1000);
-      }
+      // Refrescar historial desde la base de datos
+      setTimeout(() => {
+        cargarRecientes(50).then(setRecords).catch(() => {});
+      }, 600);
     } catch (err: any) {
       console.error('Error saving record to Google Sheets:', err);
       showToast(
-        `Error al guardar en Google Sheets: ${err.message || 'Verifica la hoja Registro'}`,
+        `No se guardó el registro: ${err.message || 'intenta de nuevo'}`,
         'error'
       );
     } finally {
@@ -275,13 +301,8 @@ export default function App() {
   const handleRefreshRecords = async () => {
     setLoadingRecords(true);
     try {
-      if (appsScriptUrl) {
-        await syncAppsScriptData(appsScriptUrl);
-      } else if (accessToken && spreadsheetId) {
-        const recent = await fetchRecentRecords(accessToken, spreadsheetId);
-        setRecords(recent);
-      }
-      showToast('Historial actualizado desde Google Sheets', 'success');
+      setRecords(await cargarRecientes(50));
+      showToast('Historial actualizado', 'success');
     } catch {
       showToast('Error al actualizar registros', 'error');
     } finally {

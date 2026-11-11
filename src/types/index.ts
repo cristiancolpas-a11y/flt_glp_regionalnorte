@@ -28,6 +28,7 @@ export interface CylinderRecord {
   metodoCaptura?: 'fotografia' | 'correccion_manual' | 'manual';
   fotoEvidenciaUrl?: string;
   confianzaLectura?: string;
+  fotoBase64?: string; // Solo en memoria: se sube al almacenamiento y no se guarda en el registro
 }
 
 export interface FormData {

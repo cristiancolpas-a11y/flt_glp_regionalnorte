@@ -80,13 +80,25 @@ export const HorometroScannerModal: React.FC<Props> = ({
     // Reset input value so same file can be reselected
     e.target.value = '';
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const base64 = event.target?.result as string;
+    // Se reduce la foto (máx. 1600 px, JPEG) para que el envío sea rápido y no supere el límite del servidor
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const escala = Math.min(1, 1600 / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * escala);
+      canvas.height = Math.round(img.height * escala);
+      canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      const base64 = canvas.toDataURL('image/jpeg', 0.82);
       setImagePreview(base64);
       analyzePhoto(base64);
     };
-    reader.readAsDataURL(file);
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      setErrorMessage('No se pudo abrir la imagen. Intenta con otra foto.');
+    };
+    img.src = url;
   };
 
   const analyzePhoto = async (base64Image: string) => {

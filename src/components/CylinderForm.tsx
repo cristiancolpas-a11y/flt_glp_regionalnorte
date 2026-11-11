@@ -363,8 +363,8 @@ export const CylinderForm: React.FC<Props> = ({
     }
 
     const now = new Date();
-    const fecha = now.toISOString().split('T')[0];
-    const hora = now.toTimeString().split(' ')[0];
+    const fecha = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(now);
+    const hora = now.toLocaleTimeString('en-GB', { timeZone: 'America/Bogota', hour12: false });
 
     const record: CylinderRecord = {
       fecha,
@@ -385,6 +385,7 @@ export const CylinderForm: React.FC<Props> = ({
       metodoCaptura: form.metodoCaptura || (form.fotoBase64 ? 'fotografia' : 'manual'),
       fotoEvidenciaUrl: form.fotoEvidenciaUrl || '',
       confianzaLectura: form.confianzaLectura || '',
+      fotoBase64: form.fotoBase64 || undefined,
     };
 
     onSubmit(record);
