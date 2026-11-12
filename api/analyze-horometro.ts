@@ -1,6 +1,6 @@
 // Función de Vercel: lectura del horómetro con Gemini (equivale a /api/analyze-horometro de server.ts).
 // Requiere la variable de entorno GEMINI_API_KEY en Vercel. Sin ella, la app pide escribir el valor a mano.
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 
 const PROMPT = `Analiza esta fotografía del tablero o display de un montacargas industrial (forklift) e identifica el valor del HORÓMETRO (contador de horas de operación).
 Suele verse en un display LCD, de 7 segmentos o mecánico, a veces con un reloj de arena, "HRS", "HOURS" o "H". Puede tener décimas (ej. 16522.2).
@@ -8,7 +8,7 @@ Reglas: no inventes dígitos; ignora velocidad, batería, temperatura o códigos
 Si la lectura es clara usa confianza "Alta" (90-100). Con dudas menores "Media" (70-89). Si es ilegible o faltan dígitos usa "Baja" o "Dudosa", esLecturaDudosa=true y horometro=null.
 Responde SOLO JSON: {"horometro": number|null, "rawText": string, "confidence": "Alta"|"Media"|"Baja"|"Dudosa", "confidencePercentage": number, "esLecturaDudosa": boolean, "motivoDuda": string, "detalles": string}`;
 
-export const config = { maxDuration: 30 };
+export const config = { maxDuration: 60 };
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
@@ -26,12 +26,15 @@ export default async function handler(req: any, res: any) {
     if (!m) return res.status(400).json({ error: 'Se requiere una imagen JPEG, PNG o WEBP' });
     if (m[2].length > 4_000_000) return res.status(413).json({ error: 'La imagen es demasiado grande' });
 
-    const ai = new GoogleGenAI({ apiKey });
+    // Tiempo máximo por intento y pocos reintentos: si Gemini se demora o rechaza la clave, se responde rápido
+    const ai = new GoogleGenAI({ apiKey, httpOptions: { timeout: 25_000, retryOptions: { attempts: 2, initialDelay: 1, maxDelay: 2 } } });
+    const t0 = Date.now();
     const r = await ai.models.generateContent({
       model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
       contents: [{ role: 'user', parts: [{ text: PROMPT }, { inlineData: { mimeType: m[1], data: m[2] } }] }],
-      config: { responseMimeType: 'application/json' },
+      config: { responseMimeType: 'application/json', thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
     });
+    console.log(`horometro: Gemini respondió en ${Date.now() - t0} ms`);
     const p = JSON.parse(r.text || '{}');
     const horometro = p.horometro === null || p.horometro === undefined || isNaN(Number(p.horometro)) ? null : Number(p.horometro);
     return res.status(200).json({
@@ -46,6 +49,7 @@ export default async function handler(req: any, res: any) {
       photoEvidenceUrl: '',
     });
   } catch (err: any) {
+    console.error('horometro: fallo Gemini', err?.status || '', err?.message || err);
     return res.status(502).json({ error: 'No fue posible leer el horómetro automáticamente. Escríbelo manualmente.', detalle: err?.message });
   }
 }
