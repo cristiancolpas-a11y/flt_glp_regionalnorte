@@ -1,20 +1,14 @@
 import React from 'react';
 import { User } from 'firebase/auth';
 import {
-  FileSpreadsheet,
   History,
   LogOut,
-  CheckCircle2,
-  AlertCircle,
   Truck,
 } from 'lucide-react';
 
 interface Props {
   user: User | null;
   onLogout: () => void;
-  spreadsheetId: string;
-  spreadsheetTitle?: string;
-  onOpenSpreadsheetModal: () => void;
   onOpenRecentRecords: () => void;
   recordsCount: number;
 }
@@ -22,9 +16,6 @@ interface Props {
 export const Header: React.FC<Props> = ({
   user,
   onLogout,
-  spreadsheetId,
-  spreadsheetTitle,
-  onOpenSpreadsheetModal,
   onOpenRecentRecords,
   recordsCount,
 }) => {
@@ -50,7 +41,6 @@ export const Header: React.FC<Props> = ({
 
         {/* Actions / Status */}
         <div className="flex items-center gap-2 sm:gap-3">
-
           {/* Recent Records button */}
           <button
             type="button"
@@ -64,27 +54,6 @@ export const Header: React.FC<Props> = ({
               <span className="px-1.5 py-0.2 bg-[#B28B35] text-[#252B33] font-bold rounded-full text-[10px]">
                 {recordsCount}
               </span>
-            )}
-          </button>
-
-          {/* Google Sheets Connection Status Button */}
-          <button
-            type="button"
-            onClick={onOpenSpreadsheetModal}
-            className={`px-3.5 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 border transition-all cursor-pointer ${
-              spreadsheetId
-                ? 'bg-[#1E232A] border-[#3E4754] text-[#E2E8F0] hover:bg-[#2F3742]'
-                : 'bg-[#B28B35]/15 border-[#B28B35]/50 text-[#F1D79E] hover:bg-[#B28B35]/25'
-            }`}
-          >
-            <FileSpreadsheet className="w-4 h-4 text-[#B28B35] shrink-0" />
-            <span className="hidden lg:inline max-w-[130px] truncate">
-              {spreadsheetTitle || (spreadsheetId ? 'Google Sheets' : 'Configurar Sheet')}
-            </span>
-            {spreadsheetId ? (
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-            ) : (
-              <AlertCircle className="w-3.5 h-3.5 text-[#B28B35]" />
             )}
           </button>
 

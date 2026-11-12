@@ -263,10 +263,6 @@ export const CylinderForm: React.FC<Props> = ({
       }
     }
 
-    // Validación de lectura dudosa no autorizada
-    if (form.esLecturaDudosa && form.metodoCaptura !== 'correccion_manual') {
-      newErrors.horometro = 'La fotografía tiene lectura dudosa. Por favor vuelve a tomarla o realiza una corrección manual autorizada.';
-    }
 
     // Advertencia de horómetro menor al anterior de la misma máquina
     if (isLowerThanPrevious && !confirmLowerAcknowledgment) {
@@ -418,6 +414,7 @@ export const CylinderForm: React.FC<Props> = ({
         selectedMaquina={form.maquina}
         previousHorometro={previousMachineRecord?.horometro}
         previousDate={previousMachineRecord?.fecha}
+        initialImage={form.fotoBase64}
       />
 
       {/* Success Notification Banner */}

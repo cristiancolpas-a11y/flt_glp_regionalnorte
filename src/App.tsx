@@ -26,7 +26,6 @@ import { cargarMaestros, cargarRecientes, guardarCambio } from './services/glpSu
 import { Header } from './components/Header';
 import { CylinderForm } from './components/CylinderForm';
 import { ConfirmModal } from './components/ConfirmModal';
-import { SpreadsheetModal } from './components/SpreadsheetModal';
 import { RecentRecordsModal } from './components/RecentRecordsModal';
 import {
   CheckCircle2,
@@ -71,7 +70,6 @@ export default function App() {
   const [lastSavedRecord, setLastSavedRecord] = useState<CylinderRecord | null>(null);
 
   // Modals
-  const [isSpreadsheetModalOpen, setIsSpreadsheetModalOpen] = useState(false);
   const [isRecentRecordsModalOpen, setIsRecentRecordsModalOpen] = useState(false);
 
 
@@ -235,15 +233,6 @@ export default function App() {
     }
   };
 
-  // Save Spreadsheet ID
-  const handleSaveSpreadsheetId = (newId: string) => {
-    setSpreadsheetId(newId);
-    localStorage.setItem(STORAGE_SHEET_KEY, newId);
-    if (accessToken && newId) {
-      syncGoogleSheetsData(accessToken, newId);
-    }
-  };
-
   // User submits form -> validate & show Confirmation Modal (as required by Workspace skill)
   const handleFormSubmit = (record: CylinderRecord) => {
     setPendingRecord(record);
@@ -342,9 +331,6 @@ export default function App() {
       <Header
         user={user}
         onLogout={handleLogout}
-        spreadsheetId={spreadsheetId || appsScriptUrl}
-        spreadsheetTitle={spreadsheetTitle}
-        onOpenSpreadsheetModal={() => setIsSpreadsheetModalOpen(true)}
         onOpenRecentRecords={() => setIsRecentRecordsModalOpen(true)}
         recordsCount={records.length}
       />
@@ -372,16 +358,6 @@ export default function App() {
         spreadsheetTitle={spreadsheetTitle || 'Google Sheets'}
         isSubmitting={isSubmitting}
         isConnectedToSheets={true}
-      />
-
-      {/* Spreadsheet Connection Modal */}
-      <SpreadsheetModal
-        isOpen={isSpreadsheetModalOpen}
-        onClose={() => setIsSpreadsheetModalOpen(false)}
-        spreadsheetId={spreadsheetId}
-        onSaveSpreadsheetId={handleSaveSpreadsheetId}
-        onSyncData={syncGoogleSheetsData}
-        accessToken={accessToken}
       />
 
       {/* Recent Records Modal */}

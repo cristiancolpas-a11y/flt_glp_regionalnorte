@@ -66,4 +66,5 @@ export interface HorometroAnalysisResult {
   motivoDuda?: string;
   metodo: 'gemini' | 'ocr';
   detalles?: string;
+  candidatos?: number[];
 }

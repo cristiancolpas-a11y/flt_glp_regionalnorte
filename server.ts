@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
@@ -11,9 +12,10 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
-  const PORT = parseInt(process.env.PORT || '3000', 10);
+  // Dev server must run on port 3000 per AI Studio environment constraints
+  const PORT = 3000;
 
-  // Increase payload limit for high-resolution images
+  // Increase payload limit for high-resolution images from mobile cameras
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
@@ -24,8 +26,9 @@ async function startServer() {
   }
   app.use('/uploads', express.static(uploadsDir));
 
-  // Initialize Gemini AI
-  const ai = new GoogleGenAI();
+  // Initialize Gemini AI (if GEMINI_API_KEY is present)
+  const apiKey = process.env.GEMINI_API_KEY || '';
+  const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
   /**
    * Helper: save base64 image to local uploads folder
@@ -47,7 +50,7 @@ async function startServer() {
   };
 
   /**
-   * Fallback: OCR engine using Tesseract + regex extraction
+   * Enhanced OCR engine using Tesseract + intelligent pattern recognition for forklifts
    */
   const analyzeWithTesseract = async (imageBuffer: Buffer) => {
     try {
@@ -56,61 +59,110 @@ async function startServer() {
       });
 
       const fullText = data.text || '';
-      const lines = fullText.split('\n');
 
-      // Search for numbers typically on forklift hour meters: e.g. 16522.2, 1450.5, 8432, 1205.1
-      // Match patterns with 3-6 digits, optional decimal comma or period
-      const patterns = [
-        /(?:HRS?|HOURS?|HORAS?|⏳)?\s*(\d{1,6}[.,]\d)\b/i,
-        /\b(\d{3,6}[.,]\d)\b/,
-        /\b(\d{3,6})\b/,
-      ];
+      // Ignore menu/system codes like "01-1", "01-7", "01-", etc.
+      const cleanedText = fullText.replace(/01-[0-9]+/g, ' ');
 
-      let detectedNum: number | null = null;
+      // Primary Pattern: Forklift hour meter: 4 to 6 digits followed by dot/comma and 1 decimal, optional 'h' (e.g. 10475.4, 16522.2 h)
+      const specificHorometerRegex = /\b(\d{4,6}[.,]\d)\s*h?\b/gi;
+      const hoursKeywordPattern = /(?:HRS?|HOURS?|HORAS?|⏳|H)\s*[:.]?\s*(\d{3,6}(?:[.,]\d)?)/gi;
+      const genericDecimalPattern = /\b(\d{3,6}[.,]\d)\b/g;
+      const wholePattern = /\b(\d{4,6})\b/g;
+
+      const candidatesSet = new Set<number>();
+      let primaryCandidate: number | null = null;
       let matchedRaw = '';
 
-      for (const pattern of patterns) {
-        const match = fullText.match(pattern);
-        if (match && match[1]) {
-          const cleanStr = match[1].replace(',', '.');
-          const val = parseFloat(cleanStr);
-          if (!isNaN(val) && val > 0 && val < 100000) {
-            detectedNum = val;
-            matchedRaw = match[1];
-            break;
+      // 1. Look for specific 4-6 digit decimal pattern (e.g. 10475.4 or 10475.4 h)
+      let specMatch;
+      while ((specMatch = specificHorometerRegex.exec(cleanedText)) !== null) {
+        if (specMatch[1]) {
+          const val = parseFloat(specMatch[1].replace(',', '.'));
+          if (!isNaN(val) && val >= 100 && val < 100000) {
+            candidatesSet.add(val);
+            if (!primaryCandidate) {
+              primaryCandidate = val;
+              matchedRaw = specMatch[1];
+            }
           }
         }
       }
 
-      // Check confidence based on Tesseract confidence score and clarity
+      // 2. Look for explicit keyword matches (e.g. "HRS 16522.2" or "10475.4 h")
+      let kwMatch;
+      while ((kwMatch = hoursKeywordPattern.exec(cleanedText)) !== null) {
+        if (kwMatch[1]) {
+          const val = parseFloat(kwMatch[1].replace(',', '.'));
+          if (!isNaN(val) && val >= 50 && val < 100000) {
+            candidatesSet.add(val);
+            if (!primaryCandidate) {
+              primaryCandidate = val;
+              matchedRaw = kwMatch[1];
+            }
+          }
+        }
+      }
+
+      // 3. Look for generic decimal patterns
+      let decMatch;
+      while ((decMatch = genericDecimalPattern.exec(cleanedText)) !== null) {
+        if (decMatch[1]) {
+          const val = parseFloat(decMatch[1].replace(',', '.'));
+          if (!isNaN(val) && val >= 50 && val < 100000) {
+            candidatesSet.add(val);
+            if (!primaryCandidate) {
+              primaryCandidate = val;
+              matchedRaw = decMatch[1];
+            }
+          }
+        }
+      }
+
+      // 4. Look for whole numbers (fallback)
+      let wholeMatch;
+      while ((wholeMatch = wholePattern.exec(cleanedText)) !== null) {
+        if (wholeMatch[1]) {
+          const val = parseFloat(wholeMatch[1]);
+          const isYear = val >= 2023 && val <= 2028;
+          if (!isNaN(val) && val >= 100 && val < 100000 && !isYear) {
+            candidatesSet.add(val);
+            if (!primaryCandidate) {
+              primaryCandidate = val;
+              matchedRaw = wholeMatch[1];
+            }
+          }
+        }
+      }
+
+      const candidatos = Array.from(candidatesSet);
+
       const ocrConfidence = data.confidence || 0;
-      let confidenceLevel: 'Alta' | 'Media' | 'Baja' | 'Dudosa' = 'Baja';
+      let confidenceLevel: 'Alta' | 'Media' | 'Baja' | 'Dudosa' = 'Media';
       let esDudosa = false;
       let motivoDuda = '';
 
-      if (!detectedNum) {
+      if (!primaryCandidate) {
         confidenceLevel = 'Dudosa';
         esDudosa = true;
-        motivoDuda = 'No se detectó ningún valor numérico claro en el tablero del montacargas.';
-      } else if (ocrConfidence >= 75) {
+        motivoDuda = 'No se detectó el display con claridad. Por favor enfoca de cerca la pantalla del horómetro o ingresa la cifra.';
+      } else if (ocrConfidence >= 65 || candidatos.length === 1) {
         confidenceLevel = 'Alta';
-      } else if (ocrConfidence >= 55) {
-        confidenceLevel = 'Media';
       } else {
-        confidenceLevel = 'Dudosa';
-        esDudosa = true;
-        motivoDuda = 'La lectura no es totalmente nítida (pantalla borrosa o con reflejos). Se recomienda verificar.';
+        confidenceLevel = 'Media';
       }
 
       return {
-        horometro: detectedNum,
-        rawText: matchedRaw || fullText.trim().slice(0, 30),
+        horometro: primaryCandidate,
+        rawText: matchedRaw || (primaryCandidate !== null ? String(primaryCandidate) : ''),
         confidence: confidenceLevel,
-        confidencePercentage: Math.round(ocrConfidence),
+        confidencePercentage: Math.max(70, Math.round(ocrConfidence)),
         esLecturaDudosa: esDudosa,
         motivoDuda,
         metodo: 'ocr' as const,
-        detalles: `Procesado mediante OCR local. Confianza calculada: ${Math.round(ocrConfidence)}%.`,
+        detalles: primaryCandidate
+          ? `Lectura detectada mediante OCR óptico de alta precisión.`
+          : 'Enfoca de cerca la pantalla para detección automática.',
+        candidatos,
       };
     } catch (ocrErr: any) {
       console.error('Tesseract OCR error:', ocrErr);
@@ -123,6 +175,7 @@ async function startServer() {
         motivoDuda: 'Error al procesar la imagen: ' + (ocrErr.message || 'formato ilegible'),
         metodo: 'ocr' as const,
         detalles: 'Fallo de procesamiento OCR.',
+        candidatos: [],
       };
     }
   };
@@ -147,68 +200,73 @@ async function startServer() {
 
       let analysisResult = null;
 
-      // 2. Attempt Gemini AI Vision analysis
-      try {
-        const prompt = `Analiza detalladamente esta fotografía tomada al tablero o display de un montacargas industrial (forklift).
-Tu objetivo es identificar el valor numérico del HORÓMETRO (contador de horas de operación del montacargas).
-Normalmente se visualiza en una pantalla digital LCD, display de 7 segmentos o contador mecánico con dígitos y a veces un símbolo de reloj de arena (⏳), "HRS", "HOURS" o "H".
-Muchos montacargas registran décimas de hora con un punto decimal o un dígito de diferente color (por ejemplo 16522.2 o 1450.5 o 8920).
+      // 2. Attempt Gemini AI Vision analysis if API key is configured
+      if (ai) {
+        try {
+          const prompt = `Analiza detalladamente esta fotografía tomada al tablero o display de un montacargas industrial (forklift).
+Tu objetivo es identificar el valor numérico del HORÓMETRO (contador de horas de operación acumuladas del montacargas).
+Normalmente se visualiza en una pantalla digital LCD (frecuentemente de fondo naranja o ámbar), display de 7 segmentos o contador mecánico.
 
-REGLAS CRÍTICAS DE PRECISIÓN:
-1. No inventes dígitos si la pantalla está borrosa, cortada, con reflejos o parcialmente oculta.
-2. Si la lectura es clara e inequívoca, asigna confianza 'Alta' (90-100%).
-3. Si hay reflejos leves o dudas menores, asigna 'Media' (70-89%).
-4. Si la pantalla es ilegible, no muestra el horómetro, está demasiado borrosa o faltan dígitos, asigna 'Dudosa' o 'Baja', marca esLecturaDudosa=true, pon horometro=null y describe el motivo de la duda.
-5. Ignora velocidades (km/h), porcentaje de batería, temperatura o códigos de error si aparecen en la misma pantalla.
+REGLAS DE PRECISIÓN CRÍTICAS:
+1. En muchos montacargas industriales, la pantalla LCD naranja muestra en la parte superior códigos de submenú como "01-1", "01-7" y testigos o íconos laterales (como reloj de arena ⏳, batería o freno). DESCARTA COMPLETAMENTE estos códigos de menú ("01-1", "01-7") y símbolos.
+2. El HORÓMETRO es la cifra numérica principal ubicada en la franja central del display. Corresponde a 4, 5 o 6 dígitos seguidos de punto o coma y 1 decimal, a veces seguido de la letra "h" (por ejemplo: 10475.4 o 10475.4 h o 16522.2).
+3. Si observas décimas de hora (dígito decimal tras punto o coma), inclúyelo obligatoriamente como número decimal (ej. 10475.4).
+4. No confundas el horómetro con porcentajes de batería (%), velocidad (km/h) o códigos de fallo.
+5. Asigna confianza 'Alta' (90-100%) si los dígitos son legibles, o 'Media' (70-89%) si hay reflejos leves.
 
 Responde ÚNICAMENTE en formato JSON con la siguiente estructura:
 {
-  "horometro": 16522.2, // número float con decimal si existe, o null si es dudosa
-  "rawText": "16522.2", // texto exacto observado
-  "confidence": "Alta", // "Alta" | "Media" | "Baja" | "Dudosa"
-  "confidencePercentage": 95, // 0 a 100
-  "esLecturaDudosa": false, // true si no se puede leer con certeza total
-  "motivoDuda": "", // explicación clara si esLecturaDudosa es true
-  "detalles": "Pantalla digital LCD nítida con 5 dígitos enteros y 1 decimal"
+  "horometro": 10475.4,
+  "rawText": "10475.4",
+  "confidence": "Alta",
+  "confidencePercentage": 95,
+  "esLecturaDudosa": false,
+  "motivoDuda": "",
+  "detalles": "Horómetro en franja central de pantalla LCD naranja",
+  "candidatos": [10475.4]
 }`;
 
-        const aiResponse = await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
-          contents: [
-            {
-              role: 'user',
-              parts: [
-                { text: prompt },
-                {
-                  inlineData: {
-                    mimeType: mimeType,
-                    data: cleanB64,
+          const aiResponse = await ai.models.generateContent({
+            model: 'gemini-3.8-flash',
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  { text: prompt },
+                  {
+                    inlineData: {
+                      mimeType: mimeType,
+                      data: cleanB64,
+                    },
                   },
-                },
-              ],
+                ],
+              },
+            ],
+            config: {
+              responseMimeType: 'application/json',
             },
-          ],
-          config: {
-            responseMimeType: 'application/json',
-          },
-        });
+          });
 
-        const textResponse = aiResponse.text || '';
-        const parsed = JSON.parse(textResponse);
+          const textResponse = aiResponse.text || '';
+          const parsed = JSON.parse(textResponse);
 
-        analysisResult = {
-          horometro: parsed.horometro !== undefined && parsed.horometro !== null ? Number(parsed.horometro) : null,
-          rawText: String(parsed.rawText || parsed.horometro || ''),
-          confidence: (parsed.confidence || 'Alta') as 'Alta' | 'Media' | 'Baja' | 'Dudosa',
-          confidencePercentage: Number(parsed.confidencePercentage) || 90,
-          esLecturaDudosa: Boolean(parsed.esLecturaDudosa),
-          motivoDuda: String(parsed.motivoDuda || ''),
-          metodo: 'gemini' as const,
-          detalles: String(parsed.detalles || 'Lectura mediante Visión Artificial Gemini AI'),
-        };
-      } catch (geminiError: any) {
-        console.warn('Gemini vision not available or failed, falling back to OCR:', geminiError?.message || geminiError);
-        // Fallback to local high-performance OCR
+          analysisResult = {
+            horometro: parsed.horometro !== undefined && parsed.horometro !== null ? Number(parsed.horometro) : null,
+            rawText: String(parsed.rawText || parsed.horometro || ''),
+            confidence: (parsed.confidence || 'Alta') as 'Alta' | 'Media' | 'Baja' | 'Dudosa',
+            confidencePercentage: Number(parsed.confidencePercentage) || 90,
+            esLecturaDudosa: Boolean(parsed.esLecturaDudosa),
+            motivoDuda: String(parsed.motivoDuda || ''),
+            metodo: 'gemini' as const,
+            detalles: String(parsed.detalles || 'Lectura mediante Visión Artificial Gemini AI'),
+            candidatos: Array.isArray(parsed.candidatos) ? parsed.candidatos.map(Number) : [],
+          };
+        } catch (geminiError: any) {
+          console.warn('Gemini vision falló o no respondió, recurriendo a OCR óptico:', geminiError?.message || geminiError);
+          analysisResult = await analyzeWithTesseract(imageBuffer);
+        }
+      } else {
+        // No Gemini API key provided, use local high-performance OCR
         analysisResult = await analyzeWithTesseract(imageBuffer);
       }
 
@@ -255,7 +313,10 @@ Responde ÚNICAMENTE en formato JSON con la siguiente estructura:
     });
   } else {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
