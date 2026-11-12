@@ -84,15 +84,20 @@ export const HorometroScannerModal: React.FC<Props> = ({
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
-      const escala = Math.min(1, 1600 / Math.max(img.width, img.height));
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.round(img.width * escala);
-      canvas.height = Math.round(img.height * escala);
-      canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const reducir = (max: number, calidad: number) => {
+        const escala = Math.min(1, max / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * escala);
+        canvas.height = Math.round(img.height * escala);
+        canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+        return canvas.toDataURL('image/jpeg', calidad);
+      };
+      // Foto de evidencia (1600 px) y una copia liviana (960 px) solo para la lectura, que así responde más rápido
+      const base64 = reducir(1600, 0.82);
+      const ligera = reducir(960, 0.85);
       URL.revokeObjectURL(url);
-      const base64 = canvas.toDataURL('image/jpeg', 0.82);
       setImagePreview(base64);
-      analyzePhoto(base64);
+      analyzePhoto(base64, ligera);
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
@@ -101,7 +106,7 @@ export const HorometroScannerModal: React.FC<Props> = ({
     img.src = url;
   };
 
-  const analyzePhoto = async (base64Image: string) => {
+  const analyzePhoto = async (base64Image: string, imagenLectura: string = base64Image) => {
     setIsAnalyzing(true);
     setErrorMessage(null);
     setAnalysisResult(null);
@@ -115,7 +120,7 @@ export const HorometroScannerModal: React.FC<Props> = ({
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          imageBase64: base64Image,
+          imageBase64: imagenLectura,
           maquina: selectedMaquina,
         }),
       });
